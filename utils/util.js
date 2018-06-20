@@ -1,64 +1,140 @@
-let Promise = require('../utils/es6-promise.js')
-function wxPromisify(fn) {
-  return function (obj = {}) {
-    return new Promise((resolve, reject) => {
-      obj.success = function (res) {
-        //成功
-        resolve(res)
-      }
-      obj.fail = function (res) {
-        //失败
-        reject(res)
-      }
-      fn(obj)
-    })
-  }
-}
-//无论promise对象最后状态如何都会执行
-Promise.prototype.finally = function (callback) {
-  let P = this.constructor;
-  return this.then(
-    value => P.resolve(callback()).then(() => value),
-    reason => P.resolve(callback()).then(() => { throw reason })
-  );
-};
+let app = getApp();
 /**
- * 微信请求get方法
- * url
- * data 以对象的格式传入
+ * 封装的request
  */
-function getRequest(url, data) {
-  var getRequest = wxPromisify(wx.request)
-  return getRequest({
-    url: url,
-    method: 'GET',
-    data: data,
-    header: {
-      'Content-Type': 'application/json'
-    }
-  })
+function request(url, data = {}, method = "GET") {
+  return new Promise(function (resolve, reject) {
+    wx.request({
+      url: url,
+      data: data,
+      method: method,
+      header: {
+        'Content-Type': 'application/json',
+        'X-Nideshop-Token': wx.getStorageSync('token')
+      },
+      success: function (res) {
+        console.log("success");
+
+        if (res.statusCode == 200) {
+
+          if (res.data.errno == 401) {
+            //需要登录后才可以操作
+
+            let code = null;
+            return login().then((res) => {
+              code = res.code;
+              return getUserInfo();
+            }).then((userInfo) => {
+              //登录远程服务器
+              request(api.AuthLoginByWeixin, { code: code, userInfo: userInfo }, 'POST').then(res => {
+                if (res.errno === 0) {
+                  //存储用户信息
+                  wx.setStorageSync('userInfo', res.data.userInfo);
+                  wx.setStorageSync('token', res.data.token);
+
+                  resolve(res);
+                } else {
+                  reject(res);
+                }
+              }).catch((err) => {
+                reject(err);
+              });
+            }).catch((err) => {
+              reject(err);
+            })
+          } else {
+            resolve(res.data);
+          }
+        } else {
+          reject(res.errMsg);
+        }
+
+      },
+      fail: function (err) {
+        reject(err)
+        console.log("failed")
+      }
+    })
+  });
 }
 
 /**
- * 微信请求post方法封装
- * url
- * data 以对象的格式传入
+ * 检查微信会话是否过期
  */
-function postRequest(url, data) {
-  var postRequest = wxPromisify(wx.request)
-  return postRequest({
-    url: url,
-    method: 'POST',
-    data: data,
-    header: {
-      "content-type": "application/x-www-form-urlencoded"
-    },
+function checkSession() {
+  return new Promise(function (resolve, reject) {
+    wx.checkSession({
+      success: function () {
+        resolve(true);
+      },
+      fail: function () {
+        reject(false);
+      }
+    })
+  });
+}
+
+/**
+ * 调用微信登录
+ */
+function login() {
+  return new Promise(function (resolve, reject) {
+    wx.login({
+      success: function (res) {
+        if (res.code) {
+          //登录远程服务器
+          resolve(res);
+        } else {
+          reject(res);
+        }
+      },
+      fail: function (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
+function getUserInfo() {
+  return new Promise(function (resolve, reject) {
+    wx.getUserInfo({
+      withCredentials: true,
+      success: function (res) {
+        resolve(res);
+      },
+      fail: function (err) {
+        reject(err);
+      }
+    })
+  });
+}
+
+function redirect(url) {
+
+  //判断页面是否需要登录
+  if (false) {
+    wx.redirectTo({
+      url: '/pages/auth/login/index'
+    });
+    return false;
+  } else {
+    wx.redirectTo({
+      url: url
+    });
+  }
+}
+
+function showErrorToast(msg) {
+  wx.showToast({
+    title: msg,
   })
 }
 
 module.exports = {
-  postRequest: postRequest,
-  getRequest: getRequest
+  request:http,
+  redirect,
+  showErrorToast,
+  checkSession,
+  login,
+  getUserInfo,
 }
-
-// 用法
